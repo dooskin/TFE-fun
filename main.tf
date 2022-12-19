@@ -1,38 +1,53 @@
+
+
 provider "google" {
-  project     = "${var.var_project}"
+  project = var.project
+  region  = var.region
+  zone    = var.zone
 }
-module "vpc" {
-  source = "../modules/global" 
-  env                   = "${var.var_env}"
-  company               = "${var.var_company}"
-  var_uc1_public_subnet = "${var.uc1_public_subnet}"
-  var_uc1_private_subnet= "${var.uc1_private_subnet}"
-  var_ue1_public_subnet = "${var.ue1_public_subnet}"
-  var_ue1_private_subnet= "${var.ue1_private_subnet}"
+
+resource "google_compute_network" "vpc_network" {
+  name                    = var.network_name
+  description             = var.network_descr
+  auto_create_subnetworks = false
 }
-module "uc1" {
-  source                = "../modules/uc1"
-  network_self_link     = "${module.vpc.out_vpc_self_link}"
-  subnetwork1           = "${module.uc1.uc1_out_public_subnet_name}"
-  env                   = "${var.var_env}"
-  company               = "${var.var_company}"
-  var_uc1_public_subnet = "${var.uc1_public_subnet}"
-  var_uc1_private_subnet= "${var.uc1_private_subnet}"
+
+resource "google_compute_subnetwork" "vpc_subnet" {
+  name          = var.subnet_name
+  ip_cidr_range = var.subnet_cidr
+  region        = var.region
+  network       = google_compute_network.vpc_network.id
 }
-module "ue1" {
-  source                = "../modules/ue1"
-  network_self_link     = "${module.vpc.out_vpc_self_link}"
-  subnetwork1           = "${module.ue1.ue1_out_public_subnet_name}"
-  env                   = "${var.var_env}"
-  company               = "${var.var_company}"
-  var_ue1_public_subnet = "${var.ue1_public_subnet}"
-  var_ue1_private_subnet= "${var.ue1_private_subnet}"
+
+resource "google_compute_global_address" "private_ip_alloc_1" {
+  name          = var.reserved1_name
+  address       = var.reserved1_address
+  purpose       = var.address_purpose
+  address_type  = var.address_type
+  prefix_length = var.reserved1_address_prefix_length
+  network       = google_compute_network.vpc_network.id
 }
-######################################################################
-# Display Output Public Instance
-######################################################################
-output "uc1_public_address"  { value = "${module.uc1.uc1_pub_address}"}
-output "uc1_private_address" { value = "${module.uc1.uc1_pri_address}"}
-output "ue1_public_address"  { value = "${module.ue1.ue1_pub_address}"}
-output "ue1_private_address" { value = "${module.ue1.ue1_pri_address}"}
-output "vpc_self_link" { value = "${module.vpc.out_vpc_self_link}"}
+
+resource "google_compute_global_address" "private_ip_alloc_2" {
+  name          = var.reserved2_name
+  address       = var.reserved2_address
+  purpose       = var.address_purpose
+  address_type  = var.address_type
+  prefix_length = var.reserved2_address_prefix_length
+  network       = google_compute_network.vpc_network.id
+}
+
+resource "google_service_networking_connection" "gcve-psa" {
+  network                 = google_compute_network.vpc_network.id
+  service                 = var.service
+  reserved_peering_ranges = [google_compute_global_address.private_ip_alloc_1.name, google_compute_global_address.private_ip_alloc_2.name]
+  depends_on              = [google_compute_network.vpc_network]
+}
+
+resource "google_compute_network_peering_routes_config" "peering_routes" {
+  peering              = var.peering
+  network              = google_compute_network.vpc_network.name
+  import_custom_routes = true
+  export_custom_routes = true
+  depends_on           = [google_service_networking_connection.gcve-psa]
+}
