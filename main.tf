@@ -1,53 +1,87 @@
-
-
-provider "google" {
-  project = var.project
-  region  = var.region
-  zone    = var.zone
-}
-
 resource "google_compute_network" "vpc_network" {
-  name                    = var.network_name
-  description             = var.network_descr
+  name                    = "my-custom-mode-network"
   auto_create_subnetworks = false
+  mtu                     = 1460
 }
 
-resource "google_compute_subnetwork" "vpc_subnet" {
-  name          = var.subnet_name
-  ip_cidr_range = var.subnet_cidr
-  region        = var.region
+resource "google_compute_subnetwork" "default" {
+  name          = "my-custom-subnet"
+  ip_cidr_range = "10.0.1.0/24"
+  region        = "us-west1"
   network       = google_compute_network.vpc_network.id
 }
+# [END compute_flask_quickstart_vpc]
 
-resource "google_compute_global_address" "private_ip_alloc_1" {
-  name          = var.reserved1_name
-  address       = var.reserved1_address
-  purpose       = var.address_purpose
-  address_type  = var.address_type
-  prefix_length = var.reserved1_address_prefix_length
+# [START compute_flask_quickstart_vm]
+# Create a single Compute Engine instance
+resource "google_compute_instance" "default" {
+  name         = "flask-vm"
+  machine_type = "f1-micro"
+  zone         = "us-west1-a"
+  tags         = ["ssh"]
+
+  boot_disk {
+    initialize_params {
+      image = "debian-cloud/debian-11"
+    }
+  }
+
+  # Install Flask
+  metadata_startup_script = "sudo apt-get update; sudo apt-get install -yq build-essential python3-pip rsync; pip install flask"
+
+  network_interface {
+    subnetwork = google_compute_subnetwork.default.id
+
+    access_config {
+      # Include this section to give the VM an external IP address
+    }
+  }
+}
+# [END compute_flask_quickstart_vm]
+
+# [START vpc_flask_quickstart_ssh_fw]
+resource "google_compute_firewall" "ssh" {
+  name = "allow-ssh"
+  allow {
+    ports    = ["22"]
+    protocol = "tcp"
+  }
+  direction     = "INGRESS"
   network       = google_compute_network.vpc_network.id
+  priority      = 1000
+  source_ranges = ["0.0.0.0/0"]
+  target_tags   = ["ssh"]
+}
+# [END vpc_flask_quickstart_ssh_fw]
+
+
+# [START vpc_flask_quickstart_5000_fw]
+resource "google_compute_firewall" "flask" {
+  name    = "flask-app-firewall"
+  network = google_compute_network.vpc_network.id
+
+  allow {
+    protocol = "tcp"
+    ports    = ["5000"]
+  }
+  source_ranges = ["0.0.0.0/0"]
+}
+# [END vpc_flask_quickstart_5000_fw]
+
+# Create new multi-region storage bucket in the US
+# with versioning enabled
+
+# [START storage_bucket_tf_with_versioning]
+resource "random_id" "bucket_prefix" {
+  byte_length = 8
 }
 
-resource "google_compute_global_address" "private_ip_alloc_2" {
-  name          = var.reserved2_name
-  address       = var.reserved2_address
-  purpose       = var.address_purpose
-  address_type  = var.address_type
-  prefix_length = var.reserved2_address_prefix_length
-  network       = google_compute_network.vpc_network.id
-}
-
-resource "google_service_networking_connection" "gcve-psa" {
-  network                 = google_compute_network.vpc_network.id
-  service                 = var.service
-  reserved_peering_ranges = [google_compute_global_address.private_ip_alloc_1.name, google_compute_global_address.private_ip_alloc_2.name]
-  depends_on              = [google_compute_network.vpc_network]
-}
-
-resource "google_compute_network_peering_routes_config" "peering_routes" {
-  peering              = var.peering
-  network              = google_compute_network.vpc_network.name
-  import_custom_routes = true
-  export_custom_routes = true
-  depends_on           = [google_service_networking_connection.gcve-psa]
+resource "google_storage_bucket" "default" {
+  name          = "${random_id.bucket_prefix.hex}-bucket-tfstate"
+  force_destroy = false
+  location      = "US"
+  storage_class = "STANDARD"
+  versioning {
+    enabled = true
+  }
 }
